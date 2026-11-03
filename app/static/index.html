@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Delta Serpents · OpenJev on Databricks</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2214%22 font-size=%2214%22>◆</text></svg>" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">◆</div>
+      <div>
+        <div class="title">DELTA SERPENTS</div>
+        <div class="subtitle">Real-time snake arena · AI snakes decide with <b>OpenJev</b> on Databricks</div>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="arena">Arena</button>
+      <button class="tab" data-tab="playground">Playground</button>
+      <button class="tab" data-tab="about">How it works</button>
+    </nav>
+    <div class="model-pill" id="modelPill" title="Decision model">model: …</div>
+  </header>
+
+  <!-- ============================== ARENA ============================== -->
+  <main id="tab-arena" class="tab-page active">
+    <section class="arena-col">
+      <div class="scorebar" id="scorebar"></div>
+      <div class="canvas-wrap">
+        <canvas id="board" width="768" height="576"></canvas>
+
+        <div class="overlay" id="lobby">
+          <div class="card lobby">
+            <h2>New match</h2>
+            <div class="row">
+              <label class="seg"><input type="radio" name="mode" value="play" checked /> <span>Play vs AI</span></label>
+              <label class="seg"><input type="radio" name="mode" value="spectate" /> <span>Watch AI vs AI</span></label>
+            </div>
+            <div id="aiList"></div>
+            <button class="ghost" id="addAi">+ add AI snake</button>
+            <div class="grid3">
+              <label>Duration
+                <select id="duration"><option value="60">1 min</option><option value="120" selected>2 min</option><option value="180">3 min</option></select>
+              </label>
+              <label>Speed
+                <select id="tps"><option value="6">chill</option><option value="8" selected>normal</option><option value="10">fast</option></select>
+              </label>
+              <label>AI rethinks every
+                <select id="interval"><option value="0.3">0.3 s</option><option value="0.5" selected>0.5 s</option><option value="1">1 s</option></select>
+              </label>
+            </div>
+            <button class="primary" id="startBtn">Start match</button>
+            <p class="hint">Arrows / WASD to steer. Each AI snake asks OpenJev 3 questions (intent, outlook, danger) in one ~250 ms call; a pathfinder executes the chosen intent every tick.</p>
+          </div>
+        </div>
+
+        <div class="overlay hidden" id="countdown"><div class="big" id="countdownNum">3</div></div>
+
+        <div class="overlay hidden" id="gameover">
+          <div class="card">
+            <h2 id="winnerTitle">Game over</h2>
+            <table class="results" id="resultsTable"></table>
+            <div class="row">
+              <button class="primary" id="againBtn">Play again</button>
+              <a class="ghost btn" id="dashLink" target="_blank" rel="noopener" href="#">Open decisions dashboard ↗</a>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="feed" id="feed"></div>
+    </section>
+    <aside class="minds" id="minds">
+      <div class="minds-empty">AI “mind” cards appear here when a match starts: live probabilities for every option OpenJev considered.</div>
+    </aside>
+  </main>
+
+  <!-- ============================ PLAYGROUND ============================ -->
+  <main id="tab-playground" class="tab-page">
+    <section class="pg-left card">
+      <div class="row space">
+        <h2>Ask OpenJev anything</h2>
+        <select id="pgTemplate">
+          <option value="support">Support ticket triage</option>
+          <option value="game">Game move</option>
+          <option value="moderation">Content moderation</option>
+          <option value="sales">Sales lead routing</option>
+        </select>
+      </div>
+      <label>State <span class="muted">(text or JSON — the situation to judge)</span></label>
+      <textarea id="pgState" rows="7" spellcheck="false"></textarea>
+      <label>Questions <span class="muted">(JSON: id → {type: choice | score | noul, instructions, criteria})</span></label>
+      <textarea id="pgQuestions" rows="16" spellcheck="false"></textarea>
+      <div class="row">
+        <button class="primary" id="pgRun">Decide</button>
+        <button class="ghost" id="pgRun10">Run 10× (latency)</button>
+        <span class="muted" id="pgStatus"></span>
+      </div>
+    </section>
+    <section class="pg-right card">
+      <h2>Answer</h2>
+      <div id="pgResult" class="muted">Run a request to see the probabilities.</div>
+      <details><summary>Raw response</summary><pre id="pgRaw"></pre></details>
+    </section>
+  </main>
+
+  <!-- ============================== ABOUT =============================== -->
+  <main id="tab-about" class="tab-page">
+    <section class="card about">
+      <h2>How it works</h2>
+      <ol>
+        <li><b>Perception (code).</b> Every ~0.5 s the app describes the arena to OpenJev in plain English: your head, rivals, a 9×9 local view, and a list of candidate <i>intents</i> with computed facts (path length, who wins the race, open space, risks).</li>
+        <li><b>Decision (OpenJev).</b> One call to the Databricks Unity AI Gateway route <code>/ai-gateway/typesafe/v1/systemone</code> with model <code id="aboutModel">system.ai.openjev-qwen35-4b</code> answers three typed questions at once: <code>intent</code> (choice), <code>outlook</code> (score: losing / even / winning) and <code>danger</code> (noul = probability of yes). No text is generated — just probabilities.</li>
+        <li><b>Action (code).</b> A deterministic controller (BFS + flood-fill anti-trap) executes the chosen intent on every tick. When <code>danger &gt; 0.6</code>, it switches to strict safety mode — decisions are combined in code.</li>
+        <li><b>Data (Delta).</b> Every decision (state, all option probabilities, choice, latency) and every game event lands in Unity Catalog tables, ready for dashboards, evaluation and audits.</li>
+      </ol>
+      <h3>Field of possibility</h3>
+      <ul class="poss">
+        <li><b>Game AI &amp; NPCs</b> — personas, difficulty via instructions, live commander orders, automated QA bots.</li>
+        <li><b>Routing &amp; triage</b> — tickets, claims, alerts, leads with a full probability distribution.</li>
+        <li><b>Human-in-the-loop</b> — escalate when confidence is low or entropy is high.</li>
+        <li><b>Agent guardrails</b> — “which tool next?”, “should I escalate?”, “is this safe?” as fast typed decisions.</li>
+        <li><b>Batch decisions</b> — score millions of rows from notebooks / jobs; decisions become data.</li>
+        <li><b>Evaluation</b> — compare personas, prompts and models in arenas; test wording / ordering sensitivity.</li>
+      </ul>
+      <p class="muted">Probabilities are relative to the options you provide and uncalibrated: high probability ≠ correctness.</p>
+    </section>
+  </main>
+
+  <script src="/static/game.js"></script>
+  <script src="/static/playground.js"></script>
+</body>
+</html>

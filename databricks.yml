@@ -1,0 +1,97 @@
+bundle:
+  name: delta_serpents
+
+# Optional, git-ignored per-developer targets (workspace host, catalog, warehouse...). See targets.local.yml.example.
+include:
+  - "*.local.yml"
+
+sync:
+  exclude:
+    - ".venv/**"
+    - "**/__pycache__/**"
+    - ".pytest_cache/**"
+    - "tests/**"
+    - "uv.lock"
+
+variables:
+  catalog:
+    description: Unity Catalog catalog that will hold the demo schema (required)
+  schema:
+    description: Schema for the decisions / events / games tables
+    default: openjev_demo
+  warehouse_id:
+    description: SQL warehouse used by the app (async logging) and the dashboard
+    lookup:
+      warehouse: "Serverless Starter Warehouse"
+  openjev_endpoint:
+    description: Serving endpoint backing the OpenJev System One model
+    default: databricks-openjev-qwen35-4b
+  openjev_model:
+    description: Unity Catalog model service passed as `model` to the System One route
+    default: system.ai.openjev-qwen35-4b
+
+targets:
+  dev:
+    default: true
+
+resources:
+  apps:
+    delta_serpents:
+      name: delta-serpents
+      description: "Real-time snake arena where AI snakes decide with OpenJev (Databricks System One API)"
+      source_code_path: ./app
+      config:
+        command: ["python", "main.py"]
+        env:
+          - name: DATABRICKS_WAREHOUSE_ID
+            value_from: sql-warehouse
+          - name: OPENJEV_MODEL
+            value: ${var.openjev_model}
+          - name: OPENJEV_ALLOWED_MODELS
+            value: ${var.openjev_model}
+          - name: OPENJEV_TABLE_PREFIX
+            value: ${var.catalog}.${var.schema}
+          - name: OPENJEV_DASHBOARD_URL
+            value: ${workspace.host}/dashboardsv3/${resources.dashboards.serpents_dashboard.id}/published
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
+        - name: openjev-endpoint
+          serving_endpoint:
+            name: ${var.openjev_endpoint}
+            permission: CAN_QUERY
+
+  jobs:
+    serpents_setup:
+      name: "Delta Serpents - setup tables and grants"
+      tasks:
+        - task_key: setup
+          notebook_task:
+            notebook_path: ./notebooks/00_setup.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              app_sp: ${resources.apps.delta_serpents.service_principal_client_id}
+
+    serpents_arena:
+      name: "Delta Serpents - OpenJev arena evaluation"
+      tasks:
+        - task_key: arena
+          notebook_task:
+            notebook_path: ./notebooks/02_arena_eval.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              model: ${var.openjev_model}
+              matches: "6"
+              duration_s: "60"
+
+  dashboards:
+    serpents_dashboard:
+      display_name: "Delta Serpents - OpenJev decisions"
+      file_path: ./dashboards/openjev_arena.lvdash.json
+      warehouse_id: ${var.warehouse_id}
+      dataset_catalog: ${var.catalog}
+      dataset_schema: ${var.schema}

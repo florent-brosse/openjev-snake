@@ -1,0 +1,919 @@
+{
+ "datasets": [
+  {
+   "name": "ds_decisions",
+   "displayName": "OpenJev decisions",
+   "queryLines": [
+    "SELECT ts, date_trunc('MINUTE', ts) AS minute, game_id, mode, snake_id,\n",
+    "  CASE WHEN persona IN ('viper','turtle','glutton') THEN initcap(persona) ELSE 'Custom' END AS persona_label,\n",
+    "  split(choice, '_')[0] AS intent_kind, choice, confidence, entropy_nats, danger, outlook_score, latency_ms, input_tokens,\n",
+    "  CASE WHEN order_text IS NOT NULL AND trim(order_text) <> '' THEN 'With commander order' ELSE 'No order' END AS order_status\n",
+    "FROM decisions WHERE brain = 'openjev'\n"
+   ]
+  },
+  {
+   "name": "ds_players",
+   "displayName": "Players per match",
+   "queryLines": [
+    "SELECT game_id, mode, ended_at, p.snake_id, p.name, p.kind, p.brain, p.score, p.kills, p.deaths,\n",
+    "  CASE WHEN winner = p.snake_id THEN 1.0 ELSE 0.0 END AS win,\n",
+    "  CASE WHEN p.kind = 'human' THEN 'You (human)'\n",
+    "       WHEN p.persona IN ('viper','turtle','glutton') THEN concat(initcap(p.persona), ' \u00b7 ', p.brain)\n",
+    "       ELSE concat('Custom \u00b7 ', p.brain) END AS player_label\n",
+    "FROM (SELECT *, explode(players) AS p FROM games)\n"
+   ]
+  },
+  {
+   "name": "ds_kpi",
+   "displayName": "Latency KPIs",
+   "queryLines": [
+    "SELECT percentile(latency_ms, 0.5) AS latency_p50, percentile(latency_ms, 0.9) AS latency_p90, count(*) AS decisions\n",
+    "FROM decisions WHERE brain = 'openjev' AND latency_ms IS NOT NULL\n"
+   ]
+  },
+  {
+   "name": "ds_danger",
+   "displayName": "Danger vs deaths",
+   "queryLines": [
+    "WITH d AS (\n",
+    "  SELECT game_id, snake_id, tick, danger FROM decisions\n",
+    "  WHERE brain = 'openjev' AND danger IS NOT NULL),\n",
+    "deaths AS (SELECT DISTINCT game_id, snake_id, tick AS death_tick FROM events WHERE type = 'death'),\n",
+    "labeled AS (\n",
+    "  SELECT d.game_id, d.snake_id, d.tick, d.danger, max(CASE WHEN x.death_tick IS NOT NULL THEN 1.0 ELSE 0.0 END) AS died_2s\n",
+    "  FROM d LEFT JOIN deaths x ON x.game_id = d.game_id AND x.snake_id = d.snake_id AND x.death_tick BETWEEN d.tick AND d.tick + 16\n",
+    "  GROUP BY 1, 2, 3, 4)\n",
+    "SELECT concat(cast(least(floor(danger * 5), 4) * 20 AS INT), '-', cast(least(floor(danger * 5), 4) * 20 + 20 AS INT), '%') AS danger_band,\n",
+    "  count(*) AS decisions, avg(died_2s) AS death_rate\n",
+    "FROM labeled GROUP BY 1 ORDER BY 1\n"
+   ]
+  },
+  {
+   "name": "ds_uncertain",
+   "displayName": "Most uncertain decisions",
+   "queryLines": [
+    "SELECT ts, mode, CASE WHEN persona IN ('viper','turtle','glutton') THEN initcap(persona) ELSE 'Custom' END AS persona_label,\n",
+    "  order_text, choice, round(confidence, 2) AS confidence, round(entropy_nats, 2) AS entropy_nats,\n",
+    "  concat_ws(' | ', transform(slice(candidates, 1, 3), c -> concat(c.id, ' ', cast(round(c.probability * 100) AS INT), '%'))) AS top_options\n",
+    "FROM decisions WHERE brain = 'openjev'\n",
+    "ORDER BY entropy_nats DESC LIMIT 25\n"
+   ]
+  }
+ ],
+ "pages": [
+  {
+   "name": "overview",
+   "displayName": "Overview",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layoutVersion": "GRID_V1",
+   "layout": [
+    {
+     "widget": {
+      "name": "title",
+      "multilineTextboxSpec": {
+       "lines": [
+        "# Delta Serpents \u00b7 OpenJev decisions"
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 12,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "subtitle",
+      "multilineTextboxSpec": {
+       "lines": [
+        "Every AI snake decision made by **OpenJev** (`system.ai.openjev-qwen35-4b`, Databricks System One API): what it saw, the probability of every option, its choice and how fast it answered."
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 1,
+      "width": 12,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "kpi_matches",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_players",
+         "fields": [
+          {
+           "name": "countdistinct(game_id)",
+           "expression": "COUNT(DISTINCT `game_id`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "countdistinct(game_id)",
+         "displayName": "Matches played"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Matches played"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 3,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "kpi_decisions",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_decisions",
+         "fields": [
+          {
+           "name": "count(choice)",
+           "expression": "COUNT(`choice`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "count(choice)",
+         "displayName": "OpenJev decisions"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "OpenJev decisions"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 2,
+      "width": 3,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "kpi_p50",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_kpi",
+         "fields": [
+          {
+           "name": "latency_p50",
+           "expression": "`latency_p50`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "latency_p50",
+         "displayName": "Median latency, all modes (ms)",
+         "format": {
+          "type": "number-plain",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 0
+          }
+         }
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Median latency, all modes (ms)"
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 2,
+      "width": 3,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "kpi_conf",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_decisions",
+         "fields": [
+          {
+           "name": "avg(confidence)",
+           "expression": "AVG(`confidence`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "avg(confidence)",
+         "displayName": "Avg choice confidence",
+         "format": {
+          "type": "number-percent",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 0
+          }
+         }
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Avg choice confidence"
+       }
+      }
+     },
+     "position": {
+      "x": 9,
+      "y": 2,
+      "width": 3,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "h_wins",
+      "multilineTextboxSpec": {
+       "lines": [
+        "## Who wins the arena?"
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 5,
+      "width": 12,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "win_rate",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_players",
+         "fields": [
+          {
+           "name": "player_label",
+           "expression": "`player_label`"
+          },
+          {
+           "name": "avg(win)",
+           "expression": "AVG(`win`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "player_label",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "player label"
+        },
+        "y": {
+         "fieldName": "avg(win)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Win rate",
+         "format": {
+          "type": "number-percent",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 0
+          }
+         }
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Win rate by player"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 6,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "avg_score",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_players",
+         "fields": [
+          {
+           "name": "player_label",
+           "expression": "`player_label`"
+          },
+          {
+           "name": "avg(score)",
+           "expression": "AVG(`score`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "player_label",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "player label"
+        },
+        "y": {
+         "fieldName": "avg(score)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Avg score"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Average score per match"
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 6,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "h_mix",
+      "multilineTextboxSpec": {
+       "lines": [
+        "## How personas and commander orders shape decisions"
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 12,
+      "width": 12,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "intent_mix",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_decisions",
+         "fields": [
+          {
+           "name": "persona_label",
+           "expression": "`persona_label`"
+          },
+          {
+           "name": "count(choice)",
+           "expression": "COUNT(`choice`)"
+          },
+          {
+           "name": "intent_kind",
+           "expression": "`intent_kind`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "persona_label",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "persona label"
+        },
+        "y": {
+         "fieldName": "count(choice)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Decisions"
+        },
+        "color": {
+         "fieldName": "intent_kind",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "intent kind"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Intent mix by persona"
+       },
+       "mark": {
+        "layout": "stack-100"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 13,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "order_mix",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_decisions",
+         "fields": [
+          {
+           "name": "order_status",
+           "expression": "`order_status`"
+          },
+          {
+           "name": "count(choice)",
+           "expression": "COUNT(`choice`)"
+          },
+          {
+           "name": "intent_kind",
+           "expression": "`intent_kind`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "order_status",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "order status"
+        },
+        "y": {
+         "fieldName": "count(choice)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Decisions"
+        },
+        "color": {
+         "fieldName": "intent_kind",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "intent kind"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Intent mix with vs without a live commander order"
+       },
+       "mark": {
+        "layout": "stack-100"
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 13,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "h_risk",
+      "multilineTextboxSpec": {
+       "lines": [
+        "## Speed and risk"
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 19,
+      "width": 12,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "latency_trend",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_decisions",
+         "fields": [
+          {
+           "name": "minute",
+           "expression": "`minute`"
+          },
+          {
+           "name": "avg(latency_ms)",
+           "expression": "AVG(`latency_ms`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "line",
+       "encodings": {
+        "x": {
+         "fieldName": "minute",
+         "scale": {
+          "type": "temporal"
+         },
+         "displayName": "Minute"
+        },
+        "y": {
+         "fieldName": "avg(latency_ms)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Avg latency (ms)",
+         "format": {
+          "type": "number-plain",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 0
+          }
+         }
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Decision latency over time (ms)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 20,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "danger_calib",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_danger",
+         "fields": [
+          {
+           "name": "danger_band",
+           "expression": "`danger_band`"
+          },
+          {
+           "name": "death_rate",
+           "expression": "`death_rate`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "danger_band",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "danger band"
+        },
+        "y": {
+         "fieldName": "death_rate",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Death rate within 2 s",
+         "format": {
+          "type": "number-percent",
+          "decimalPlaces": {
+           "type": "max",
+           "places": 0
+          }
+         }
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Is the 'danger' answer predictive? Death within 2 s by danger band"
+       }
+      }
+     },
+     "position": {
+      "x": 6,
+      "y": 20,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "h_detail",
+      "multilineTextboxSpec": {
+       "lines": [
+        "## Most uncertain decisions (highest entropy)"
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 26,
+      "width": 12,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "uncertain_table",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_uncertain",
+         "fields": [
+          {
+           "name": "ts",
+           "expression": "`ts`"
+          },
+          {
+           "name": "mode",
+           "expression": "`mode`"
+          },
+          {
+           "name": "persona_label",
+           "expression": "`persona_label`"
+          },
+          {
+           "name": "order_text",
+           "expression": "`order_text`"
+          },
+          {
+           "name": "choice",
+           "expression": "`choice`"
+          },
+          {
+           "name": "confidence",
+           "expression": "`confidence`"
+          },
+          {
+           "name": "entropy_nats",
+           "expression": "`entropy_nats`"
+          },
+          {
+           "name": "top_options",
+           "expression": "`top_options`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "ts",
+          "displayName": "Time"
+         },
+         {
+          "fieldName": "mode",
+          "displayName": "Mode"
+         },
+         {
+          "fieldName": "persona_label",
+          "displayName": "Persona"
+         },
+         {
+          "fieldName": "order_text",
+          "displayName": "Commander order"
+         },
+         {
+          "fieldName": "choice",
+          "displayName": "Choice"
+         },
+         {
+          "fieldName": "confidence",
+          "displayName": "Confidence"
+         },
+         {
+          "fieldName": "entropy_nats",
+          "displayName": "Entropy (nats)"
+         },
+         {
+          "fieldName": "top_options",
+          "displayName": "Top 3 options"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Where OpenJev hesitated"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 27,
+      "width": 12,
+      "height": 7
+     }
+    }
+   ]
+  },
+  {
+   "name": "filters",
+   "displayName": "Filters",
+   "pageType": "PAGE_TYPE_GLOBAL_FILTERS",
+   "layoutVersion": "GRID_V1",
+   "layout": [
+    {
+     "widget": {
+      "name": "filter_mode",
+      "queries": [
+       {
+        "name": "f_dec_mode",
+        "query": {
+         "datasetName": "ds_decisions",
+         "fields": [
+          {
+           "name": "mode",
+           "expression": "`mode`"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "f_pl_mode",
+        "query": {
+         "datasetName": "ds_players",
+         "fields": [
+          {
+           "name": "mode",
+           "expression": "`mode`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-multi-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "mode",
+          "displayName": "Mode",
+          "queryName": "f_dec_mode"
+         },
+         {
+          "fieldName": "mode",
+          "displayName": "Mode",
+          "queryName": "f_pl_mode"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Match mode"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 2,
+      "height": 2
+     }
+    }
+   ]
+  }
+ ],
+ "uiSettings": {
+  "theme": {
+   "canvasBackgroundColor": {
+    "light": "#F7F8FC",
+    "dark": "#070B14"
+   },
+   "widgetBackgroundColor": {
+    "light": "#FFFFFF",
+    "dark": "#0E1424"
+   },
+   "widgetBorderColor": {
+    "light": "#FFFFFF",
+    "dark": "#0E1424"
+   },
+   "fontColor": {
+    "light": "#0E1424",
+    "dark": "#E6ECFF"
+   },
+   "selectionColor": {
+    "light": "#2272B4",
+    "dark": "#8ACAFF"
+   },
+   "visualizationColors": [
+    "#4CC9F0",
+    "#FF4D6D",
+    "#80ED99",
+    "#FFD166",
+    "#C77DFF",
+    "#FF7A59",
+    "#3A86FF",
+    "#94A3B8"
+   ],
+   "widgetHeaderAlignment": "LEFT",
+   "widgetCornerRadius": 12
+  }
+ }
+}

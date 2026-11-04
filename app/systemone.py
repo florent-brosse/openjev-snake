@@ -9,6 +9,7 @@ App, the notebook/CLI user elsewhere) — no tokens are handled here.
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import os
 import time
@@ -76,13 +77,15 @@ class SystemOneClient:
             self._w = WorkspaceClient(profile=self._profile) if self._profile else WorkspaceClient()
         return self._w
 
-    def _post(self, body: dict) -> tuple[int, Any]:
+    def _post(self, body: dict, tags: Optional[dict] = None) -> tuple[int, Any]:
         """One HTTP attempt. Returns (status_code, parsed JSON or text)."""
         import requests
 
         if self._session is None:
             self._session = requests.Session()
         headers = {"Content-Type": "application/json", **self.w.config.authenticate()}
+        if tags:  # shows up in system.ai_gateway.usage.request_tags
+            headers["Databricks-Ai-Gateway-Request-Tags"] = json.dumps({str(k): str(v) for k, v in tags.items()})
         r = self._session.post(self.w.config.host.rstrip("/") + ROUTE, json=body, headers=headers,
                                timeout=self.timeout_s)
         try:
@@ -90,7 +93,7 @@ class SystemOneClient:
         except ValueError:
             return r.status_code, r.text
 
-    def call(self, state: Any, questions: dict, model: Optional[str] = None) -> dict:
+    def call(self, state: Any, questions: dict, model: Optional[str] = None, tags: Optional[dict] = None) -> dict:
         """Synchronous call. Returns the response plus ``latency_ms`` and per-choice ``entropy_nats``."""
         body = {"model": model or self.model, "state": state, "questions": questions}
         status: Optional[int] = None
@@ -98,7 +101,7 @@ class SystemOneClient:
         for attempt in range(self.retries + 1):
             t0 = time.perf_counter()
             try:
-                status, payload = self._post(body)
+                status, payload = self._post(body, tags)
             except Exception as exc:  # network error / timeout: retryable
                 status, payload = None, str(exc)
             if status == 200 and isinstance(payload, dict):
@@ -115,8 +118,9 @@ class SystemOneClient:
         self.errors += 1
         raise SystemOneError(f"System One call failed ({status}): {str(detail)[:500]}", status)
 
-    async def acall(self, state: Any, questions: dict, model: Optional[str] = None) -> dict:
+    async def acall(self, state: Any, questions: dict, model: Optional[str] = None,
+                    tags: Optional[dict] = None) -> dict:
         if self._sem is None:
             self._sem = asyncio.Semaphore(self._max_concurrency)
         async with self._sem:
-            return await asyncio.to_thread(self.call, state, questions, model)
+            return await asyncio.to_thread(self.call, state, questions, model, tags)

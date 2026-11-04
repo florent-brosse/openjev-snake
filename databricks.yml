@@ -29,6 +29,9 @@ variables:
   openjev_model:
     description: Unity Catalog model service passed as `model` to the System One route
     default: system.ai.openjev-qwen35-4b
+  trace_sample_rate:
+    description: Fraction of AI decisions traced to MLflow at random (uncertain and pre-death decisions are always traced)
+    default: "0.05"
 
 targets:
   dev:
@@ -53,6 +56,12 @@ resources:
             value: ${var.catalog}.${var.schema}
           - name: OPENJEV_DASHBOARD_URL
             value: ${workspace.host}/dashboardsv3/${resources.dashboards.serpents_dashboard.id}/published
+          - name: MLFLOW_EXPERIMENT_ID
+            value: ${resources.experiments.serpents_experiment.id}
+          - name: TRACE_SAMPLE_RATE
+            value: "${var.trace_sample_rate}"
+          - name: TRACE_EXPORT_JOB_ID
+            value_from: trace-export-job
       resources:
         - name: sql-warehouse
           sql_warehouse:
@@ -62,6 +71,14 @@ resources:
           serving_endpoint:
             name: ${var.openjev_endpoint}
             permission: CAN_QUERY
+        - name: trace-export-job
+          job:
+            id: ${resources.jobs.serpents_traces.id}
+            permission: CAN_MANAGE_RUN
+
+  experiments:
+    serpents_experiment:
+      name: /Workspace/Users/${workspace.current_user.userName}/delta_serpents
 
   jobs:
     serpents_setup:
@@ -85,8 +102,21 @@ resources:
               catalog: ${var.catalog}
               schema: ${var.schema}
               model: ${var.openjev_model}
+              experiment_id: ${resources.experiments.serpents_experiment.id}
               matches: "6"
               duration_s: "60"
+
+    serpents_traces:
+      name: "Delta Serpents - export selected decisions as MLflow traces"
+      max_concurrent_runs: 1
+      tasks:
+        - task_key: export
+          notebook_task:
+            notebook_path: ./notebooks/03_export_traces.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              experiment_id: ${resources.experiments.serpents_experiment.id}
 
   dashboards:
     serpents_dashboard:

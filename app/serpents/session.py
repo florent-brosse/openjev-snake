@@ -60,7 +60,7 @@ class GameSession:
     """Server-authoritative real-time match. Frames are pushed to subscriber queues."""
 
     def __init__(self, cfg: GameConfig, ais: list[dict], with_human: bool, client, logger=None,
-                 decision_interval_s: float = 0.5, mode: str = "human_vs_ai"):
+                 decision_interval_s: float = 0.5, mode: str = "human_vs_ai", tracer=None):
         self.id = uuid.uuid4().hex[:12]
         self.cfg = cfg
         self.mode = mode
@@ -79,6 +79,17 @@ class GameSession:
         self._tasks: list[asyncio.Task] = []
         self._running = False
         self.created = time.time()
+        self.tracer = tracer
+        self.selector = tracer.selector(cfg.tps) if tracer else None
+
+    def _tags(self, a: "AIPlayer") -> dict:
+        """Per-call AI Gateway request tags: join system.ai_gateway.usage with the game tables."""
+        return {"app": "delta-serpents", "game_id": self.id, "mode": self.mode, "snake_id": a.snake_id,
+                "persona": a.persona[:40]}
+
+    def _trace(self, items: list) -> None:
+        if self.tracer and items:
+            self.tracer.emit(self.id, self.mode, items)
 
     # ------------------------------------------------------------ subscribers
     def subscribe(self) -> asyncio.Queue:
@@ -163,6 +174,11 @@ class GameSession:
         try:
             while not self.game.over:
                 events = self.game.step(self._ai_direction)
+                if self.selector:
+                    for e in events:
+                        if e["type"] == "death" and e.get("snake_id") in self.ai_by_id:
+                            self._trace(self.selector.on_death(e["snake_id"], e["tick"]))
+                    self._trace(self.selector.on_tick(self.game.tick))
                 if self.logger and events:
                     for e in events:
                         self.logger.event(self.id, e["tick"], e.get("snake_id"), e["type"],
@@ -178,6 +194,10 @@ class GameSession:
             self._broadcast({**self._frame([]), "type": "game_over", "winner": self.game.winner()})
             if self.logger and self.game.over:  # abandoned matches would skew win rates
                 self.logger.game(self)
+            if self.selector:
+                self._trace(self.selector.flush())
+                if self.game.over:
+                    self.tracer.trigger_export()
             for t in self._tasks:
                 if t is not asyncio.current_task():
                     t.cancel()
@@ -195,14 +215,15 @@ class GameSession:
                 brain = self.openjev if a.brain_kind == "openjev" else self.heuristic
                 if a.order_kind is None and a.brain_kind == "openjev":
                     try:
-                        a.order_kind = await self.openjev.aclassify_order(a.order)
+                        a.order_kind = await self.openjev.aclassify_order(a.order, tags=self._tags(a))
                     except Exception as exc:
                         a.order_kind = "none"
                         log.warning("order classification failed: %s", exc)
                     if self.logger and a.order:
                         self.logger.event(self.id, self.game.tick, a.snake_id, "order_kind",
                                           {"order": a.order, "kind": a.order_kind})
-                dec = await brain.adecide(self.game, snake, a.persona, a.order, order_kind=a.order_kind)
+                dec = await brain.adecide(self.game, snake, a.persona, a.order, order_kind=a.order_kind,
+                                          tags=self._tags(a))
                 if self.game.snakes[a.snake_id].alive:
                     a.intent = dec.intent
                     a.danger = dec.danger or 0.0
@@ -210,6 +231,8 @@ class GameSession:
                 a.decisions += 1
                 if self.logger:
                     self.logger.decision(self.id, a, dec, mode=self.mode)
+                if self.selector:
+                    self.selector.on_decision(dec, {"persona": a.persona, "order": a.order, "order_kind": a.order_kind})
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # keep playing with the previous intent
@@ -264,9 +287,11 @@ def run_lockstep(cfg: GameConfig, ais: list[dict], client=None, decision_every_t
             return None
         brain = openjev if a.brain_kind == "openjev" and openjev else heuristic
         try:
+            tags = {"app": "delta-serpents", "game_id": game_id, "mode": "arena", "snake_id": a.snake_id,
+                    "persona": a.persona[:40]}
             if a.order_kind is None:
-                a.order_kind = openjev.classify_order(a.order) if (openjev and a.order) else "none"
-            return brain.decide(game, snake, a.persona, a.order, order_kind=a.order_kind)
+                a.order_kind = openjev.classify_order(a.order, tags=tags) if (openjev and a.order) else "none"
+            return brain.decide(game, snake, a.persona, a.order, order_kind=a.order_kind, tags=tags)
         except Exception as exc:
             a.errors += 1
             log.warning("lockstep decision failed: %s", exc)

@@ -87,8 +87,9 @@ class FakeClient(SystemOneClient):
         super().__init__(workspace_client=object(), **kw)
         self.responses, self.bodies = list(responses), []
 
-    def _post(self, body):
+    def _post(self, body, tags=None):
         self.bodies.append(body)
+        self.tags = tags
         r = self.responses.pop(0)
         if isinstance(r, Exception):
             raise r
@@ -134,7 +135,8 @@ class EchoClient:
 
     model = "fake"
 
-    def call(self, state, questions, model=None):
+    def call(self, state, questions, model=None, tags=None):
+        self.last_tags = tags
         if "kind" in questions:  # commander-order classification
             return {"latency_ms": 1.0, "answers": {"kind": {"type": "choice", "choice": "safe", "confidence": 0.9,
                                                             "probabilities": {"safe": 0.9, "none": 0.1}}}}

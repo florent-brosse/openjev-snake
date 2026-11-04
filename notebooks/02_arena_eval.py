@@ -31,6 +31,7 @@ dbutils.widgets.text("schema", "openjev_demo")
 dbutils.widgets.text("matches", "6")
 dbutils.widgets.text("duration_s", "60")
 dbutils.widgets.text("model", "system.ai.openjev-qwen35-4b")
+dbutils.widgets.text("experiment_id", "")  # set by the bundle; falls back to /Users/<you>/delta_serpents_arena
 CATALOG, SCHEMA, MODEL = (dbutils.widgets.get(k) for k in ("catalog", "schema", "model"))
 MATCHES, DURATION = int(dbutils.widgets.get("matches")), int(dbutils.widgets.get("duration_s"))
 PREFIX = f"{CATALOG}.{SCHEMA}"
@@ -100,7 +101,10 @@ for table, data in (("decisions", decisions), ("events", events), ("games", game
 
 user = spark.sql("SELECT current_user()").first()[0]
 mlflow.set_tracking_uri("databricks")
-mlflow.set_experiment(f"/Users/{user}/delta_serpents_arena")
+if dbutils.widgets.get("experiment_id"):
+    mlflow.set_experiment(experiment_id=dbutils.widgets.get("experiment_id"))
+else:
+    mlflow.set_experiment(f"/Users/{user}/delta_serpents_arena")
 lat = pd.Series([d["latency_ms"] for d in decisions if d["latency_ms"]])
 with mlflow.start_run(run_name=f"arena-{MATCHES}x{DURATION}s"):
     mlflow.log_params({"model": MODEL, "matches": MATCHES, "duration_s": DURATION, "lineup": json.dumps(LINEUP)})

@@ -55,16 +55,18 @@ class OpenJevBrain:
         self.client = client
         self.model = model
 
-    def classify_order(self, order: str) -> str:
+    def classify_order(self, order: str, tags: Optional[dict] = None) -> str:
         if not order.strip():
             return "none"
-        ans = self.client.call({"commander_order": order}, order_question(), self.model)["answers"]["kind"]
+        ans = self.client.call({"commander_order": order}, order_question(), self.model,
+                               tags={**(tags or {}), "kind": "order"})["answers"]["kind"]
         return ans.get("choice") if ans.get("choice") in ORDER_KINDS else "none"
 
-    async def aclassify_order(self, order: str) -> str:
+    async def aclassify_order(self, order: str, tags: Optional[dict] = None) -> str:
         if not order.strip():
             return "none"
-        resp = await self.client.acall({"commander_order": order}, order_question(), self.model)
+        resp = await self.client.acall({"commander_order": order}, order_question(), self.model,
+                                       tags={**(tags or {}), "kind": "order"})
         choice = resp["answers"]["kind"].get("choice")
         return choice if choice in ORDER_KINDS else "none"
 
@@ -93,15 +95,16 @@ class OpenJevBrain:
         )
 
     def decide(self, game: Game, me: Snake, persona: str, order: str, with_outlook: bool = True,
-               order_kind: Optional[str] = None) -> Decision:
+               order_kind: Optional[str] = None, tags: Optional[dict] = None) -> Decision:
         cands, state, questions = self.prepare(game, me, persona, order, with_outlook, order_kind)
-        resp = self.client.call(state, questions, self.model)
+        resp = self.client.call(state, questions, self.model, tags={**(tags or {}), "kind": "decision", "tick": game.tick})
         return self.interpret(game, me, cands, state, resp)
 
     async def adecide(self, game: Game, me: Snake, persona: str, order: str, with_outlook: bool = True,
-                      order_kind: Optional[str] = None) -> Decision:
+                      order_kind: Optional[str] = None, tags: Optional[dict] = None) -> Decision:
         cands, state, questions = self.prepare(game, me, persona, order, with_outlook, order_kind)
-        resp = await self.client.acall(state, questions, self.model)
+        resp = await self.client.acall(state, questions, self.model,
+                                       tags={**(tags or {}), "kind": "decision", "tick": game.tick})
         return self.interpret(game, me, cands, state, resp)
 
 
@@ -111,7 +114,7 @@ class HeuristicBrain:
     name = "heuristic"
 
     def decide(self, game: Game, me: Snake, persona: str = "", order: str = "", with_outlook: bool = False,
-               order_kind: Optional[str] = None) -> Decision:
+               order_kind: Optional[str] = None, tags: Optional[dict] = None) -> Decision:
         cands = build_candidates(game, me)
         pick = None
         for c in cands:  # candidates list specials first, then foods by distance

@@ -25,6 +25,11 @@ SCHEMAS = {
         "input_tokens INT, latency_ms DOUBLE"
     ),
     "events": "ts TIMESTAMP, game_id STRING, tick INT, snake_id STRING, type STRING, detail STRING",
+    "decision_traces": (
+        "ts TIMESTAMP, game_id STRING, mode STRING, tick INT, snake_id STRING, reason STRING, outcome STRING, "
+        "persona STRING, order_text STRING, order_kind STRING"
+    ),
+    "trace_exports": "ts TIMESTAMP, game_id STRING, snake_id STRING, tick INT, trace_id STRING, exported_at TIMESTAMP",
     "games": (
         "game_id STRING, mode STRING, started_at TIMESTAMP, ended_at TIMESTAMP, ticks INT, winner STRING, "
         "players ARRAY<STRUCT<snake_id: STRING, name: STRING, kind: STRING, persona: STRING, brain: STRING, "
@@ -89,6 +94,13 @@ class DecisionLogger:
     def game(self, session):
         s = session.summary()
         self._put("games", {**s, "started_at": _iso(s["started_at"]), "ended_at": _iso(s["ended_at"])})
+
+    def trace(self, game_id: str, mode: str, dec, meta: dict, reason: str, outcome: str):
+        self._put("decision_traces", {
+            "ts": _iso(dec.ts), "game_id": game_id, "mode": mode, "tick": dec.tick, "snake_id": dec.snake_id,
+            "reason": reason, "outcome": outcome, "persona": meta.get("persona"), "order_text": meta.get("order") or None,
+            "order_kind": meta.get("order_kind"),
+        })
 
     def game_row(self, row: dict):
         self._put("games", row)

@@ -62,12 +62,14 @@ app/                      Databricks App (FastAPI + vanilla JS canvas)
   main.py                 routes: /api/game, /ws/game/{id}, /sse/game/{id}, /api/playground, /api/model
   systemone.py            System One client (SDK auth, retries, semaphore, entropy)
   decision_log.py         async batched Delta writer + table DDL
+  tracing.py              which decisions become MLflow traces, and the trace builder
   serpents/               engine, controller, intents (perception), brains, sessions (real-time + lockstep)
   static/                 index.html, game.js (renderer + mind cards), playground.js, style.css
 notebooks/
   00_setup.py             schema/tables + grants to the app service principal (job)
   01_openjev_playground.py  learn System One: triage, steering, wording/order sensitivity, batch → Delta, latency
   02_arena_eval.py        headless lockstep tournament → Delta + MLflow (job)
+  03_export_traces.py     turns selected decisions into MLflow traces (job, triggered by the app after each match)
 dashboards/openjev_arena.lvdash.json   AI/BI dashboard
 databricks.yml            bundle: app (+ its env config), 2 jobs, dashboard; targets.local.yml.example
 tests/                    pytest: engine rules, controller, intents, client, brains, lockstep
@@ -76,7 +78,7 @@ tests/                    pytest: engine rules, controller, intents, client, bra
 ## Run, test, deploy
 
 ```bash
-uv sync && uv run pytest                            # 43 unit tests (no network): rules, collisions fuzz, controller, client, sessions
+uv sync && uv run pytest                            # 49 unit tests (no network): rules, collisions fuzz, controller, client, sessions
 
 # Deploy to your workspace (uses the CLI profile's host; the warehouse defaults to "Serverless Starter Warehouse")
 databricks bundle deploy -p <profile> --var catalog=<your_catalog>
@@ -118,9 +120,26 @@ Three complementary layers, each answering a different question:
 
 | Layer | Where | Answers |
 |---|---|---|
-| **Unity AI Gateway usage** (automatic, no code) | `system.ai_gateway.usage`, filter `api_type = 'typesafe/v1/systemone'` | Who calls OpenJev, how often, input tokens, status codes, gateway latency, for cost and governance |
-| **Game decision log** (this app) | `<catalog>.openjev_demo.decisions / events / games` | What each snake saw, the probability of every option, what it chose, and what happened next. Joinable with deaths and scores; this is what the dashboard uses |
-| **MLflow** | experiment `/Users/<you>/delta_serpents_arena` | Arena runs, i.e. comparisons of personas, models or prompt variants, with metrics and a summary table |
+| **Unity AI Gateway usage** (automatic) | `system.ai_gateway.usage`, filter `api_type = 'typesafe/v1/systemone'` | Who calls OpenJev, how often, input tokens, status codes, gateway latency, for cost and governance. Every call carries **request tags** (`app`, `kind` = decision / order / playground, `game_id`, `snake_id`, `persona`, `mode`, `tick`) through the `Databricks-Ai-Gateway-Request-Tags` header, so usage joins with the game tables. Expect ingestion delay (minutes to hours). |
+| **Game decision log** | `<catalog>.openjev_demo.decisions / events / games` | What each snake saw, every option's probability, what it chose, and what happened next. This is the source of truth for the dashboard |
+| **MLflow** | experiment `/Users/<you>/delta_serpents` | **Traces** of the decisions worth inspecting (random sample, uncertain decisions, every decision of the 2 s before a death), each tagged `reason` and `outcome`, with spans `snake_decision → perception (code) + openjev.systemone`. The experiment also holds the **arena runs** |
+
+How traces are produced: Databricks Apps egress can block the cloud-storage endpoint MLflow uses for span data, so the app does not export traces itself.
+1. The app selects decisions in memory (`app/tracing.py`) and records them in `decision_traces`.
+2. At the end of each match, it triggers the `serpents_traces` job (`notebooks/03_export_traces.py`).
+3. The job rebuilds each trace with its real timestamps and records what it exported in `trace_exports`.
+
+Control the random sample with `--var trace_sample_rate=0.05`.
+
+```sql
+-- OpenJev cost per match (gateway usage joined with game results)
+SELECT u.request_tags['game_id'] AS game_id, count(*) AS openjev_calls, sum(u.input_tokens) AS input_tokens,
+       percentile(u.latency_ms, 0.5) AS p50_ms, any_value(g.winner) AS winner
+FROM system.ai_gateway.usage u
+JOIN <catalog>.openjev_demo.games g ON g.game_id = u.request_tags['game_id']
+WHERE u.request_tags['app'] = 'delta-serpents'
+GROUP BY 1 ORDER BY input_tokens DESC;
+```
 
 ## License
 

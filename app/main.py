@@ -18,6 +18,7 @@ from decision_log import DecisionLogger
 from serpents.engine import DIRS, GameConfig
 from serpents.session import GameSession
 from systemone import DEFAULT_MODEL, SystemOneClient, SystemOneError
+from tracing import DecisionTracer
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -33,6 +34,8 @@ MAX_SESSIONS = int(os.getenv("MAX_SESSIONS", "6"))
 client = SystemOneClient(model=MODEL, max_concurrency=int(os.getenv("OPENJEV_MAX_CONCURRENCY", "6")),
                          profile=os.getenv("DATABRICKS_CONFIG_PROFILE") or None, retries=1, timeout_s=4.0)
 dlog = DecisionLogger(TABLE_PREFIX, WAREHOUSE_ID)
+tracer = DecisionTracer(dlog, export_job_id=os.getenv("TRACE_EXPORT_JOB_ID"), experiment_id=os.getenv("MLFLOW_EXPERIMENT_ID"),
+                        sample_rate=float(os.getenv("TRACE_SAMPLE_RATE", "0.05")))
 sessions: dict[str, GameSession] = {}
 
 app = FastAPI(title="Delta Serpents — OpenJev on Databricks")
@@ -94,6 +97,9 @@ def model_info():
         "calls": client.calls, "errors": client.errors, "logging": dlog.enabled, "table_prefix": TABLE_PREFIX,
         "rows_written": dlog.written, "log_error": dlog.last_error, "dashboard_url": DASHBOARD_URL,
         "active_sessions": sum(1 for s in sessions.values() if s.started_at and not s.ended_at),
+        "tracing": {"enabled": tracer.enabled, "experiment_id": tracer.experiment_id, "selected": tracer.selected,
+                    "export_job_id": tracer.export_job_id, "export_runs": tracer.export_runs,
+                    "sample_rate": tracer.sample_rate, "error": tracer.last_error},
     }
 
 
@@ -106,7 +112,7 @@ async def new_game(body: NewGame):
                      seed=body.seed if body.seed is not None else int(time.time() * 1000) % 100000)
     mode = "spectator" if body.spectator else "human_vs_ai"
     s = GameSession(cfg, [a.model_dump() for a in body.ais], with_human=not body.spectator, client=client,
-                    logger=dlog, decision_interval_s=body.decision_interval_s, mode=mode)
+                    logger=dlog, decision_interval_s=body.decision_interval_s, mode=mode, tracer=tracer)
     sessions[s.id] = s
     return {"game_id": s.id, "seed": cfg.seed, "snakes": [sn.id for sn in s.game.snakes.values()]}
 
@@ -186,7 +192,7 @@ async def playground(body: PlaygroundRequest):
     if len(json.dumps(body.state)) > 20000 or len(json.dumps(body.questions)) > 20000:
         raise HTTPException(413, "state and questions are limited to 20,000 characters each")
     try:
-        return await client.acall(body.state, body.questions, model)
+        return await client.acall(body.state, body.questions, model, tags={"app": "delta-serpents", "kind": "playground"})
     except SystemOneError as exc:
         raise HTTPException(exc.status or 502, str(exc))
 

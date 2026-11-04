@@ -111,3 +111,17 @@ The app's environment (model, table prefix, dashboard link) is defined in `datab
 - Under parallel load from a laptop, p90 latency rose to ~0.7–0.8 s. Both the decision cadence and the number of AI snakes are configurable.
 - Game sessions live in memory on one app instance. That's fine for a demo but not multi-tenant hardened. Up to 6 matches can run at once.
 - Logging is best-effort: rows land in Delta 4–10 s later, and the last few seconds can be lost if the app restarts. For guaranteed delivery, use Zerobus Ingest or Lakebase.
+
+## Observability
+
+Three complementary layers, each answering a different question:
+
+| Layer | Where | Answers |
+|---|---|---|
+| **Unity AI Gateway usage** (automatic, no code) | `system.ai_gateway.usage`, filter `api_type = 'typesafe/v1/systemone'` | Who calls OpenJev, how often, input tokens, status codes, gateway latency, for cost and governance |
+| **Game decision log** (this app) | `<catalog>.openjev_demo.decisions / events / games` | What each snake saw, the probability of every option, what it chose, and what happened next. Joinable with deaths and scores; this is what the dashboard uses |
+| **MLflow** | experiment `/Users/<you>/delta_serpents_arena` | Arena runs, i.e. comparisons of personas, models or prompt variants, with metrics and a summary table |
+
+## License
+
+MIT, see [LICENSE](LICENSE).

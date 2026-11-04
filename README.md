@@ -2,6 +2,8 @@
 
 A real-time snake arena running as a **Databricks App**. You play against AI snakes, and each one decides what to do with **OpenJev**, a *decision model*. OpenJev doesn't generate text. You give it a situation and some typed questions, and it returns a probability for every possible answer.
 
+![Arena: three OpenJev snakes; Viper obeys a live "play it safe" order while Turtle heads for the best-value food cluster](docs/arena.png)
+
 It's a deployable demo (a Declarative Automation Bundle) containing the app, two jobs, a playground notebook and an AI/BI dashboard.
 
 **Prerequisites:**
@@ -40,6 +42,8 @@ TypeSafe's `system.ai.typesafeai-jev-1-14-0` uses the same API. It's a one-line 
 3. **The decision is OpenJev.** One call answers `intent`, `outlook` and `danger` together (`app/systemone.py`, `app/serpents/brains.py`). Calls are async, so the snake keeps following its current intent while the next decision is in flight.
 4. **Action is code** (`app/serpents/controller.py`). Collision rules: walls and bodies kill; in a head-on crash, including two heads swapping places, the longer snake survives; a shield *bounces* you (you skip that move and lose the shield), so snakes never overlap. A BFS pathfinder with a flood-fill anti-trap check carries out the intent on every tick. When `danger > 0.6` it switches to strict safety mode, which is a small example of code combining several decisions.
 5. **Data goes to Delta** (`app/decision_log.py`). Every decision, game event and match result is queued in memory and written **asynchronously in batches** through the SQL warehouse, every 4 s or 40 rows. The game never waits on the database, and it plays exactly the same if logging is off (empty `OPENJEV_TABLE_PREFIX`).
+
+![Playground: one System One call answers a choice, a score and a yes/no question with probabilities](docs/playground.png)
 
 The **Playground** tab sends any System One request (ticket triage, moderation, lead routing…) and shows the probabilities and latency.
 

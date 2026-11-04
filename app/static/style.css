@@ -84,7 +84,7 @@ button, .btn { cursor: pointer; border-radius: 10px; padding: 9px 16px; font-wei
 .intent-now { margin: 10px 0 8px; font-size: 13px; }
 .intent-now b { font-size: 15px; color: #fff; }
 .bars { display: flex; flex-direction: column; gap: 4px; }
-.bar { display: grid; grid-template-columns: 112px 1fr 44px; gap: 8px; align-items: center; font-size: 12px; }
+.bar { display: grid; grid-template-columns: 150px 1fr 44px; gap: 8px; align-items: center; font-size: 12px; }
 .bar .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
 .bar.top .lbl { color: #fff; font-weight: 700; }
 .bar .track { display: block; height: 10px; background: #0a1020; border-radius: 999px; overflow: hidden; border: 1px solid var(--line); }
@@ -118,3 +118,4 @@ pre { background: #0a1020; border: 1px solid var(--line); border-radius: 10px; p
 .poss li { margin: 6px 0; }
 .bar .best { font-size: 9px; padding: 0 5px; border-radius: 999px; background: rgba(255,209,102,.18); color: #ffd166; margin-left: 4px; }
 .understood { font-size: 11px; margin-top: 4px; min-height: 14px; }
+.bar .ordered { font-size: 9px; padding: 0 5px; border-radius: 999px; background: rgba(199,125,255,.2); color: #c77dff; margin-left: 4px; }

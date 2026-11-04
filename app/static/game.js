@@ -24,7 +24,9 @@
 
   // ----------------------------------------------------------------- lobby
   const PERSONAS = { viper: "Viper — aggressive hunter", turtle: "Turtle — cautious survivor", glutton: "Glutton — greedy eater", custom: "Custom persona…" };
-  const PREVIEW_COLORS = ["#4cc9f0", "#80ed99", "#ffd166", "#c77dff"];
+  // same palette order as the server (session.COLORS): the human takes the first colour when playing
+  const SERVER_COLORS = ["#ff4d6d", "#4cc9f0", "#80ed99", "#ffd166", "#c77dff"];
+  const previewColor = (i) => SERVER_COLORS[(i + (spectating() ? 0 : 1)) % SERVER_COLORS.length];
   let aiRows = [{ persona: "viper", order: "", custom: "", brain: "openjev" }, { persona: "turtle", order: "", custom: "", brain: "openjev" }];
 
   function renderLobby() {
@@ -34,7 +36,7 @@
       const row = document.createElement("div");
       row.className = "ai-row";
       row.innerHTML = `
-        <span class="dot" style="background:${PREVIEW_COLORS[i % 4]}"></span>
+        <span class="dot" style="background:${previewColor(i)}"></span>
         <select data-k="persona">${Object.entries(PERSONAS).map(([k, v]) => `<option value="${k}" ${k === r.persona ? "selected" : ""}>${v.split(" —")[0]}</option>`).join("")}</select>
         <input type="text" data-k="order" placeholder="Commander order (optional), e.g. hunt the red snake" value="${esc(r.order)}" />
         <select data-k="brain"><option value="openjev" ${r.brain === "openjev" ? "selected" : ""}>OpenJev</option><option value="heuristic" ${r.brain === "heuristic" ? "selected" : ""}>Heuristic bot</option></select>
@@ -219,7 +221,7 @@
       const shown = card.showAll ? d.candidates : d.candidates.slice(0, 6);
       el.querySelector(".bars").innerHTML = shown.map((c, i) => `
         <div class="bar ${c.id === d.choice ? "top" : ""}" title="${esc(c.description)}">
-          <span class="lbl">${esc(intentLabel(c.id) + steps(c.description))}${(c.description || "").includes("BEST VALUE") ? ' <span class="best">best</span>' : ""}</span>
+          <span class="lbl">${esc(intentLabel(c.id) + steps(c.description))}${(c.description || "").includes("BEST VALUE") ? ' <span class="best">best</span>' : ""}${(c.description || "").includes("ORDERED BY YOUR COMMANDER") ? ' <span class="ordered">order</span>' : ""}</span>
           <span class="track"><span class="fill" style="width:${(c.probability * 100).toFixed(1)}%;background:${c.id === d.choice ? s.color : "#3a4a72"}"></span></span>
           <span class="val">${(c.probability * 100).toFixed(0)}%</span></div>`).join("");
       const more = el.querySelector(".more");
